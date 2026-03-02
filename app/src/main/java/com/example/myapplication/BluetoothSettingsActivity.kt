@@ -80,7 +80,7 @@ class BluetoothSettingsActivity : AppCompatActivity() {
 
         if (name != null && address != null) {
             selectedDeviceName.text = name
-            selectedDeviceAddress.text = address
+            selectedDeviceAddress.text = "$address (saved)"
             selectedDeviceAddress.visibility = View.VISIBLE
         } else {
             selectedDeviceName.text = "No device selected"
@@ -200,11 +200,30 @@ class BluetoothSettingsActivity : AppCompatActivity() {
             card.addView(innerLayout)
 
             card.setOnClickListener {
-                selectDevice(deviceName, deviceAddress)
+                verifyAndSelectDevice(deviceName, deviceAddress)
             }
 
             devicesContainer.addView(card)
         }
+    }
+
+    private fun verifyAndSelectDevice(name: String, address: String) {
+        setBusy(true)
+        Thread {
+            val testResult = BluetoothHelper.testConnection(this, address)
+            runOnUiThread {
+                setBusy(false)
+                if (testResult.isSuccess) {
+                    selectDevice(name, address)
+                } else {
+                    Toast.makeText(
+                        this,
+                        "Connection test failed: ${testResult.exceptionOrNull()?.localizedMessage}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }.start()
     }
 
     private fun selectDevice(name: String, address: String) {
@@ -219,9 +238,14 @@ class BluetoothSettingsActivity : AppCompatActivity() {
         selectedDeviceAddress.text = address
         selectedDeviceAddress.visibility = View.VISIBLE
 
-        Toast.makeText(this, "Selected: $name", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Connected and selected: $name", Toast.LENGTH_SHORT).show()
 
         showPairedDevices()
+    }
+
+    private fun setBusy(isBusy: Boolean) {
+        scanProgress.visibility = if (isBusy) View.VISIBLE else View.GONE
+        findViewById<Button>(R.id.scanButton).isEnabled = !isBusy
     }
 
     private fun dpToPx(dp: Int): Int {

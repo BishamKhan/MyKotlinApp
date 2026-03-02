@@ -391,7 +391,7 @@ class HomeActivity : AppCompatActivity() {
                 } else {
                     Toast.makeText(
                         this,
-                        "Send failed: ${result.exceptionOrNull()?.localizedMessage}",
+                        "Send failed: ${result.exceptionOrNull()?.localizedMessage}\nRe-check Bluetooth Settings and select a tested device.",
                         Toast.LENGTH_LONG
                     ).show()
                 }

@@ -18,6 +18,100 @@ object BluetoothHelper {
     // Standard SPP UUID
     private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
+    @SuppressLint("MissingPermission")
+    private fun getAdapter(context: Context): BluetoothAdapter? {
+        val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        return bluetoothManager?.adapter
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun getDevice(context: Context, address: String): Result<BluetoothDevice> {
+        val adapter = getAdapter(context)
+            ?: return Result.failure(IllegalStateException("Bluetooth is not available on this device."))
+
+        if (!adapter.isEnabled) {
+            return Result.failure(IllegalStateException("Bluetooth is disabled. Please enable it."))
+        }
+
+        val bonded = adapter.bondedDevices.any { it.address == address }
+        if (!bonded) {
+            return Result.failure(
+                IllegalStateException("Selected device is not paired. Please pair and select it again.")
+            )
+        }
+
+        return try {
+            Result.success(adapter.getRemoteDevice(address))
+        } catch (e: IllegalArgumentException) {
+            Result.failure(IllegalStateException("Invalid Bluetooth address: $address"))
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun supportsSpp(device: BluetoothDevice): Boolean {
+        val advertised = device.uuids ?: return true
+        return advertised.any { it.uuid == SPP_UUID }
+    }
+
+    private fun connectSocket(adapter: BluetoothAdapter, device: BluetoothDevice): BluetoothSocket {
+        val attempts = listOf<(BluetoothDevice) -> BluetoothSocket>(
+            { d -> d.createRfcommSocketToServiceRecord(SPP_UUID) },
+            { d -> d.createInsecureRfcommSocketToServiceRecord(SPP_UUID) },
+            { d ->
+                val method = d.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+                method.invoke(d, 1) as BluetoothSocket
+            }
+        )
+
+        var lastError: IOException? = null
+        attempts.forEachIndexed { idx, factory ->
+            var socket: BluetoothSocket? = null
+            try {
+                socket = factory(device)
+                adapter.cancelDiscovery()
+                socket.connect()
+                return socket
+            } catch (e: Exception) {
+                lastError = if (e is IOException) e else IOException(e.localizedMessage ?: e.toString(), e)
+                try {
+                    socket?.close()
+                } catch (_: IOException) {
+                }
+                if (idx == attempts.lastIndex) {
+                    throw lastError ?: IOException("Failed to connect Bluetooth socket.")
+                }
+            }
+        }
+
+        throw lastError ?: IOException("Failed to connect Bluetooth socket.")
+    }
+
+    @SuppressLint("MissingPermission")
+    fun testConnection(context: Context, address: String): Result<Unit> {
+        val deviceResult = getDevice(context, address)
+        val device = deviceResult.getOrElse { return Result.failure(it) }
+        val adapter = getAdapter(context)
+            ?: return Result.failure(IllegalStateException("Bluetooth is not available on this device."))
+
+        if (!supportsSpp(device)) {
+            return Result.failure(
+                IllegalStateException("Selected device does not advertise SPP. Use an SPP-capable device.")
+            )
+        }
+
+        var socket: BluetoothSocket? = null
+        return try {
+            socket = connectSocket(adapter, device)
+            Result.success(Unit)
+        } catch (e: IOException) {
+            Result.failure(IOException("Failed to connect: ${e.localizedMessage}"))
+        } finally {
+            try {
+                socket?.close()
+            } catch (_: IOException) {
+            }
+        }
+    }
 
     @SuppressLint("MissingPermission")
     fun sendPayload(context: Context, hexPayload: String): Result<Unit> {
@@ -25,28 +119,28 @@ object BluetoothHelper {
         val address = prefs.getString(BluetoothSettingsActivity.PREF_BT_ADDRESS, null)
             ?: return Result.failure(IllegalStateException("No Bluetooth device selected. Please select one in Settings."))
 
-        val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-        val adapter: BluetoothAdapter = bluetoothManager?.adapter
+        val deviceResult = getDevice(context, address)
+        val device = deviceResult.getOrElse { return Result.failure(it) }
+        val adapter = getAdapter(context)
             ?: return Result.failure(IllegalStateException("Bluetooth is not available on this device."))
 
-        if (!adapter.isEnabled) {
-            return Result.failure(IllegalStateException("Bluetooth is disabled. Please enable it."))
+        if (!supportsSpp(device)) {
+            return Result.failure(
+                IllegalStateException("Selected device does not advertise SPP. It cannot receive this payload.")
+            )
         }
 
-        val device: BluetoothDevice = try {
-            adapter.getRemoteDevice(address)
-        } catch (e: IllegalArgumentException) {
-            return Result.failure(IllegalStateException("Invalid Bluetooth address: $address"))
+        val cleanPayload = hexPayload.replace(" ", "")
+        if (cleanPayload.length % 2 != 0 || cleanPayload.any { !it.isDigit() && it.uppercaseChar() !in 'A'..'F' }) {
+            return Result.failure(IllegalArgumentException("Payload is not valid hex."))
         }
 
         var socket: BluetoothSocket? = null
         return try {
-            socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
-            adapter.cancelDiscovery() // Cancel discovery before connecting
-            socket.connect()
+            socket = connectSocket(adapter, device)
 
             // Convert hex string to bytes
-            val bytes = hexStringToBytes(hexPayload)
+            val bytes = hexStringToBytes(cleanPayload)
             socket.outputStream.write(bytes)
             socket.outputStream.flush()
 

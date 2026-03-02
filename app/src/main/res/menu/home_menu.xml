@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item android:id="@+id/menu_settings"
+        android:title="Settings"/>
+
+    <item android:id="@+id/menu_bluetooth"
+        android:title="Bluetooth"/>
+
+    <item android:id="@+id/menu_commands"
+        android:title="Commands"/>
+
+    <item android:id="@+id/menu_common"
+        android:title="Common"/>
+
+    <item android:id="@+id/menu_network"
+        android:title="Network"/>
+
+    <item android:id="@+id/menu_logout"
+        android:title="Logout"/>
+
+</menu>
